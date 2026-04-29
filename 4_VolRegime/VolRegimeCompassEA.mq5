@@ -88,6 +88,9 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
   {
+   // TP1 yopilgandan so'ng StopLossni foydaga surish funksiyasi (har bir tickda ishlaydi)
+   CheckTrailingStop();
+
    // Check for new bar
    datetime current_time = iTime(_Symbol, _Period, 0);
    if(current_time == last_bar_time) return;
@@ -146,6 +149,55 @@ void OnTick()
            {
             double tp = bid - tp_dist - (i * tp_dist * 0.5); // Har bir bitimda TP uzoqroq qo'yiladi
             trade.Sell(lot_size, _Symbol, bid, sl, tp, "VRC Sell Signal " + IntegerToString(i+1));
+           }
+        }
+     }
+  }
+
+//+------------------------------------------------------------------+
+//| Check Trailing Stop after 1st TP is hit                          |
+//+------------------------------------------------------------------+
+void CheckTrailingStop()
+  {
+   int total = PositionsTotal();
+   // Agar ochiq pozitsiyalar soni InpPosCount dan kam (1 tasi TP da yopilgan) va 0 dan ko'p bo'lsa ishlaydi
+   if(total == 0 || total >= InpPosCount) return;
+
+   for(int i = total - 1; i >= 0; i--)
+     {
+      ulong ticket = PositionGetTicket(i);
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol || PositionGetInteger(POSITION_MAGIC) != InpMagic) continue;
+
+      double entry = PositionGetDouble(POSITION_PRICE_OPEN);
+      double sl = PositionGetDouble(POSITION_SL);
+      long type = PositionGetInteger(POSITION_TYPE);
+      
+      if(type == POSITION_TYPE_BUY)
+        {
+         if(sl >= entry) continue; // Agar b/e (foydaga) allaqachon tushgan bo'lsa teginmaymiz
+         
+         double sl_dist = entry - sl;
+         double tp1_dist = sl_dist * InpRRR;
+         double new_sl = NormalizeDouble(entry + (tp1_dist / 2.0), _Digits); // Dastlabki TP masofasining yarmi
+         
+         double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
+         if(bid > new_sl) // Narx yangi qo'yiladigan SL dan tepada (xavfsiz) ekanini tekshirish
+           {
+            trade.PositionModify(ticket, new_sl, PositionGetDouble(POSITION_TP));
+           }
+        }
+      else if(type == POSITION_TYPE_SELL)
+        {
+         if(sl <= entry && sl != 0.0) continue; // Allaqachon foydaga surilgan
+         
+         double sl_dist = sl - entry;
+         double tp1_dist = sl_dist * InpRRR;
+         double new_sl = NormalizeDouble(entry - (tp1_dist / 2.0), _Digits); // Dastlabki TP masofasining yarmi
+         
+         double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+         if(ask < new_sl || new_sl == 0.0) // Narx pastlab ketgan (xavfsiz) bo'lsa
+           {
+            trade.PositionModify(ticket, new_sl, PositionGetDouble(POSITION_TP));
            }
         }
      }
