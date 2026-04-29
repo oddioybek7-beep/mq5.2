@@ -16,7 +16,8 @@ enum ENUM_RRR
 
 //--- Inputs
 input string     InpSect1       = "--- Risk Management ---";
-input int        InpPosCount    = 3;        // Bitta signalda ochiladigan bitimlar soni
+input int        InpMinPosCount = 2;        // Minimal ochiladigan bitimlar soni
+input int        InpMaxPosCount = 5;        // Maksimal ochiladigan bitimlar soni
 input double     InpRiskPercent = 1.0;      // Risk% per Trade
 input ENUM_RRR   InpRRR_Mode    = RRR_1_3;  // Risk:Reward Ratio (Tanlang)
 input double     InpATRMulti    = 1.5;      // ATR Multiplier for Stop Loss
@@ -121,7 +122,9 @@ void OnTick()
    
    double atr_val = atr_buf[0];
    
-   if(PositionsTotal() >= InpPosCount) return;
+   int current_pos_count = GetDynamicPosCount();
+   
+   if(PositionsTotal() >= current_pos_count) return;
 
    bool buy_signal  = (prev_trend == -1 && curr_trend == 1);
    bool sell_signal = (prev_trend == 1 && curr_trend == -1);
@@ -140,7 +143,7 @@ void OnTick()
         {
          double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
          double sl = ask - sl_dist;
-         for(int i = 0; i < InpPosCount; i++)
+         for(int i = 0; i < current_pos_count; i++)
            {
             double tp = ask + tp_dist + (i * tp_dist * 0.5); 
             trade.Buy(lot_size, _Symbol, ask, sl, tp, "BOSWaves Buy " + IntegerToString(i+1));
@@ -150,7 +153,7 @@ void OnTick()
         {
          double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
          double sl = bid + sl_dist;
-         for(int i = 0; i < InpPosCount; i++)
+         for(int i = 0; i < current_pos_count; i++)
            {
             double tp = bid - tp_dist - (i * tp_dist * 0.5);
             trade.Sell(lot_size, _Symbol, bid, sl, tp, "BOSWaves Sell " + IntegerToString(i+1));
@@ -164,8 +167,9 @@ void OnTick()
 //+------------------------------------------------------------------+
 void CheckTrailingStop()
   {
+   int current_pos_count = GetDynamicPosCount();
    int total = PositionsTotal();
-   if(total == 0 || total >= InpPosCount) return;
+   if(total == 0 || total >= current_pos_count) return;
 
    for(int i = total - 1; i >= 0; i--)
      {
@@ -179,10 +183,12 @@ void CheckTrailingStop()
       
       if(type == POSITION_TYPE_BUY)
         {
-         if(sl >= entry) continue;
+         if(sl >= entry) continue; // Allaqachon break even yoki TP1/2 ga tushgan bo'lsa tegmang
          
          double sl_dist = entry - sl;
          double tp1_dist = sl_dist * rrr_multi;
+         
+         // 1-chi bitim TP siga qadar bo'lgan masofaning YARMIGA SL ni qo'yamiz (Foydani avtomatik qulflaydi)
          double new_sl = NormalizeDouble(entry + (tp1_dist / 2.0), _Digits);
          
          double bid = SymbolInfoDouble(_Symbol, SYMBOL_BID);
@@ -190,10 +196,12 @@ void CheckTrailingStop()
         }
       else if(type == POSITION_TYPE_SELL)
         {
-         if(sl <= entry && sl != 0.0) continue;
+         if(sl <= entry && sl != 0.0) continue; // Allaqachon break even yoki TP1/2 ga tushgan bo'lsa tegmang
          
          double sl_dist = sl - entry;
          double tp1_dist = sl_dist * rrr_multi;
+         
+         // 1-chi bitim TP siga qadar bo'lgan masofaning YARMIGA SL ni qo'yamiz (Foydani avtomatik qulflaydi)
          double new_sl = NormalizeDouble(entry - (tp1_dist / 2.0), _Digits);
          
          double ask = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
@@ -233,12 +241,14 @@ double CalculateLotSize(double sl_distance)
    
    if(sl_distance == 0 || tick_size == 0) return SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    
+   // Balansga qarab risk puli ajratiladi
    double risk_money = balance * (InpRiskPercent / 100.0);
    double sl_ticks = sl_distance / tick_size;
    double base_lot = risk_money / (sl_ticks * tick_value);
    
    int wins = GetConsecutiveWins();
-   double lot = base_lot * (1.0 + (double)wins); 
+   // Lot hajmi faqat yutuqlar seriyasiga emas, balans oshishiga ham tayanadi
+   double lot = base_lot * (1.0 + (double)wins * 0.5); 
    
    double min_lot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double max_lot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
@@ -250,6 +260,16 @@ double CalculateLotSize(double sl_distance)
    if(lot > max_lot) lot = max_lot;
    
    return lot;
+  }
+
+int GetDynamicPosCount()
+  {
+   int wins = GetConsecutiveWins();
+   // Bitimlar soni yutuq seriyasi oshsa ko'payadi, yutqazsa yana bittadan pasayadi (min 2, max 5)
+   int dynamic_count = InpMinPosCount + (wins / 2); 
+   if(dynamic_count > InpMaxPosCount) dynamic_count = InpMaxPosCount;
+   
+   return dynamic_count;
   }
 
 //+------------------------------------------------------------------+
